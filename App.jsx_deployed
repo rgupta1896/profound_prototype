@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
 const navItems = [
   { label: 'Home', icon: '⌂' },
-  { label: 'Tasks', icon: '◫', active: true },
+  { label: 'Signals', icon: '◫', active: true },
   { label: 'Queue', icon: '≣' },
   { label: 'Customers', icon: '◎' },
   { label: 'Product Feedback', icon: '◌' },
@@ -107,7 +107,7 @@ const seedQueue = [
   {
     caseNumber: 'SD-1038',
     account: 'Brex',
-    status: 'Ready for update',
+    status: 'Ready for customer update',
     dri: 'CX',
     nextMilestone: 'Send findings summary',
     lastUpdated: '2h ago',
@@ -125,7 +125,7 @@ const seedQueue = [
   {
     caseNumber: 'SD-1031',
     account: 'Mercury',
-    status: 'Pending Engineering',
+    status: 'Pending Engineering investigation',
     dri: 'Engineering',
     nextMilestone: 'Validate citation output',
     lastUpdated: 'Yesterday',
@@ -137,6 +137,7 @@ const cxChecklistItems = [
   'Confirm top 3 affected prompts',
   'Collect screenshots or exports',
   'Confirm deadline for customer review',
+  'Clarify whether issue appears in both engines',
 ];
 
 const seededCxNotes = [
@@ -158,38 +159,6 @@ const engineeringTicket = [
   'Confirm no recent parsing or pipeline regressions for this account',
 ];
 
-function getActiveStatus(workflow) {
-  if (workflow.engineeringRaised) return 'Pending Engineering investigation';
-  if (workflow.productRequested) return 'Under Product review';
-  if (workflow.queued) return 'Needs CX follow-up';
-  return 'Needs evidence';
-}
-
-function getQueueStatusLabel(status) {
-  switch (status) {
-    case 'Pending Engineering investigation':
-      return 'Pending Engineering';
-    case 'Ready for customer update':
-      return 'Ready for update';
-    default:
-      return status;
-  }
-}
-
-function getStepState({ enabled, complete }) {
-  if (complete) return 'Done';
-  if (enabled) return 'Ready';
-  return 'Locked';
-}
-
-function getCurrentWorkflowStage(workflow) {
-  if (workflow.engineeringRaised) return 'Engineering investigation';
-  if (workflow.productRequested) return 'Product review';
-  if (workflow.cxAssigned) return 'CX follow-up';
-  if (workflow.queued) return 'Queued';
-  return 'Analysis complete';
-}
-
 function App() {
   const [workflow, setWorkflow] = useState({
     queued: false,
@@ -205,30 +174,18 @@ function App() {
   const [checklistState, setChecklistState] = useState(
     cxChecklistItems.map((item) => ({ label: item, complete: false })),
   );
-  const timelineRef = useRef(null);
 
-  const activeStatus = getActiveStatus(workflow);
-  const currentWorkflowStage = getCurrentWorkflowStage(workflow);
+  const activeStatus = workflow.engineeringRaised
+    ? 'Pending Engineering investigation'
+    : workflow.productRequested
+      ? 'Under Product review'
+      : workflow.cxNotesAdded
+        ? 'Ready for Product review'
+        : workflow.queued
+          ? 'Needs CX follow-up'
+          : 'Needs evidence';
 
   const activeDri = workflow.productRequested ? 'Product' : 'CX';
-  const queueStepState = getStepState({ enabled: !workflow.queued, complete: workflow.queued });
-  const cxStepState = getStepState({
-    enabled: workflow.queued && !workflow.cxAssigned,
-    complete: workflow.cxAssigned,
-  });
-  const productStepState = getStepState({
-    enabled: workflow.cxAssigned && !workflow.productRequested,
-    complete: workflow.productRequested,
-  });
-  const engineeringStepState = getStepState({
-    enabled: workflow.productRequested && !workflow.engineeringRaised,
-    complete: workflow.engineeringRaised,
-  });
-
-  useEffect(() => {
-    if (!timelineRef.current) return;
-    timelineRef.current.scrollTop = timelineRef.current.scrollHeight;
-  }, [timeline]);
 
   const queueRows = [
     ...(workflow.queued
@@ -236,15 +193,17 @@ function App() {
           {
             caseNumber: 'SD-1042',
             account: 'Ramp',
-            status: getQueueStatusLabel(activeStatus),
+            status: activeStatus,
             dri: activeDri,
             nextMilestone: workflow.engineeringRaised
               ? 'Complete technical validation'
               : workflow.productRequested
                 ? 'Review technical recommendation'
-                : workflow.cxAssigned
-                  ? 'Review Product assessment'
-                  : 'Queue for CX triage',
+                : workflow.cxNotesAdded
+                  ? 'Request Product review'
+                  : workflow.cxAssigned
+                    ? 'Collect CX evidence'
+                    : 'Queue for CX triage',
             lastUpdated: 'Just now',
             selected: true,
           },
@@ -268,12 +227,6 @@ function App() {
     if (!workflow.queued || workflow.cxAssigned) return;
     setWorkflow((current) => ({ ...current, cxAssigned: true }));
     setCustomerDraft(initialDrafts.cx);
-    setChecklistState((current) =>
-      current.map((item, index) => ({
-        ...item,
-        complete: index === 2,
-      })),
-    );
     appendTimeline('CX follow-up assigned', timestamps.cxAssigned);
   };
 
@@ -291,7 +244,7 @@ function App() {
   };
 
   const handleProductReview = () => {
-    if (!workflow.cxAssigned || workflow.productRequested) return;
+    if (!workflow.cxNotesAdded || workflow.productRequested) return;
     setWorkflow((current) => ({ ...current, productRequested: true }));
     setCustomerDraft(initialDrafts.product);
     appendTimeline('Product review requested', timestamps.product);
@@ -363,7 +316,8 @@ function App() {
       <main className="content">
         <header className="toolbar">
           <div>
-            <h1>Tasks Overview</h1>
+            <div className="breadcrumb">Signals / Coordination</div>
+            <h1>Signal Desk</h1>
           </div>
           <div className="toolbar-controls">
             {['All teams', 'Active cases', 'High urgency', 'Filter'].map((chip) => (
@@ -375,15 +329,14 @@ function App() {
         </header>
 
         <section className="top-grid">
-          <Panel title="Case summary" headerRight={<StatusChip label={actionBrief.urgency} tone="high" />}>
+          <Panel title="Incoming signal" headerRight={<StatusChip label={actionBrief.urgency} tone="high" />}>
             <div className="meta-grid">
               <MetaItem label="Case number" value="SD-1042" />
               <MetaItem label="Account" value="Ramp" />
               <MetaItem label="Source team" value="CX" />
               <MetaItem label="Urgency" value="High" />
-              <MetaItem label="Case deadline" value="Customer review next week" />
+              <MetaItem label="Customer deadline" value="Customer review next week" />
             </div>
-            <div className="section-kicker">Customer input</div>
             <div className="signal-body">
               <p>
                 We’re seeing competitor mentions and citations in Profound that our team did not expect
@@ -394,230 +347,191 @@ function App() {
             </div>
           </Panel>
 
-          <Panel title="Structured action brief" spotlight>
+          <Panel
+            title="Structured action brief"
+            headerRight={
+              <div className="header-chips">
+                <StatusChip label={activeStatus} tone="info" />
+                <StatusChip label={`DRI ${activeDri}`} tone="neutral" />
+              </div>
+            }
+            spotlight
+          >
             <div className="brief-stack">
               <BriefSection title="Overview">
                 <KeyValue label="Account" value={actionBrief.account} />
                 <KeyValue label="Request title" value={actionBrief.requestTitle} />
                 <KeyValue label="Source team" value={actionBrief.sourceTeam} />
-                <KeyValue label="Case deadline" value={actionBrief.customerDeadline} />
+                <KeyValue label="Customer deadline" value={actionBrief.customerDeadline} />
                 <KeyValue label="Urgency" value={actionBrief.urgency} />
                 <KeyValue label="Customer risk level" value={actionBrief.customerRiskLevel} />
                 <KeyValue label="Status" value={activeStatus} />
               </BriefSection>
 
-              <div className="analysis-group">
-                <div className="section-kicker">AI insights</div>
-
-                <BriefSection title="Summary">
+              <BriefSection title="Signal summary">
                 <p>{actionBrief.issueSummary}</p>
                 <TagRow label="Affected prompts" items={actionBrief.affectedPrompts} />
                 <TagRow label="Affected engines" items={actionBrief.affectedEngines} />
                 <ListBlock label="Reported symptoms" items={actionBrief.reportedSymptoms} />
                 <KeyValue label="Customer concern" value={actionBrief.customerConcern} />
-                </BriefSection>
+              </BriefSection>
 
-                <BriefSection title="Likely diagnosis">
-                  <KeyValue label="Primary issue category" value={actionBrief.primaryIssueCategory} />
-                  <KeyValue label="Secondary issue category" value={actionBrief.secondaryIssueCategory} />
-                  <KeyValue label="Confidence level" value={actionBrief.confidenceLevel} />
-                  <KeyValue label="Hypothesis" value={actionBrief.hypothesis} />
-                </BriefSection>
+              <BriefSection title="Likely diagnosis">
+                <KeyValue label="Primary issue category" value={actionBrief.primaryIssueCategory} />
+                <KeyValue label="Secondary issue category" value={actionBrief.secondaryIssueCategory} />
+                <KeyValue label="Confidence level" value={actionBrief.confidenceLevel} />
+                <KeyValue label="Hypothesis" value={actionBrief.hypothesis} />
+              </BriefSection>
 
-                <BriefSection title="Team routing">
-                  <KeyValue label="Recommended DRI" value={actionBrief.recommendedDri} />
-                  <TagRow label="Involved teams" items={actionBrief.involvedTeams} />
-                  <div className="responsibility-grid">
-                    {Object.entries(actionBrief.teamResponsibilities).map(([team, responsibility]) => (
-                      <div key={team} className="responsibility-card">
-                        <span className="responsibility-team">{team}</span>
-                        <p>{responsibility}</p>
-                      </div>
-                    ))}
-                  </div>
-                </BriefSection>
+              <BriefSection title="Team routing">
+                <KeyValue label="Recommended DRI" value={actionBrief.recommendedDri} />
+                <TagRow label="Involved teams" items={actionBrief.involvedTeams} />
+                <div className="responsibility-grid">
+                  {Object.entries(actionBrief.teamResponsibilities).map(([team, responsibility]) => (
+                    <div key={team} className="responsibility-card">
+                      <span className="responsibility-team">{team}</span>
+                      <p>{responsibility}</p>
+                    </div>
+                  ))}
+                </div>
+              </BriefSection>
 
-                <BriefSection title="Missing evidence">
-                  <ListBlock label="Missing information" items={actionBrief.missingInformation} />
-                  <ListBlock label="Evidence requested" items={actionBrief.evidenceRequested} />
-                  <ListBlock label="Blocking questions" items={actionBrief.blockingQuestions} />
-                </BriefSection>
+              <BriefSection title="Missing evidence">
+                <ListBlock label="Missing information" items={actionBrief.missingInformation} />
+                <ListBlock label="Evidence requested" items={actionBrief.evidenceRequested} />
+                <ListBlock label="Blocking questions" items={actionBrief.blockingQuestions} />
+              </BriefSection>
 
-                <BriefSection title="Next actions">
-                  <KeyValue label="Immediate next step" value={actionBrief.immediateNextStep} />
-                  <ListBlock label="Internal actions" items={actionBrief.internalActions} />
-                  <KeyValue
-                    label="Customer response recommendation"
-                    value={actionBrief.customerResponseRecommendation}
-                  />
-                  <KeyValue label="Customer-facing narrative" value={actionBrief.customerFacingNarrative} />
-                  <KeyValue
-                    label="Escalation required"
-                    value={actionBrief.escalationRequired ? 'True' : 'False'}
-                  />
-                </BriefSection>
-              </div>
+              <BriefSection title="Next actions">
+                <KeyValue label="Immediate next step" value={actionBrief.immediateNextStep} />
+                <ListBlock label="Internal actions" items={actionBrief.internalActions} />
+                <KeyValue
+                  label="Customer response recommendation"
+                  value={actionBrief.customerResponseRecommendation}
+                />
+                <KeyValue label="Customer-facing narrative" value={actionBrief.customerFacingNarrative} />
+                <KeyValue
+                  label="Escalation required"
+                  value={actionBrief.escalationRequired ? 'True' : 'False'}
+                />
+              </BriefSection>
             </div>
           </Panel>
 
-          <Panel title="Investigation workflow">
-            <div className="workflow-current-stage" aria-label="Current workflow stage">
-              <span className="workflow-current-stage-label">Current stage</span>
-              <span className="workflow-current-stage-value">{currentWorkflowStage}</span>
-            </div>
-
-            <div className="workflow-rail">
-              <WorkflowStepCard
-                title="Add to investigation queue"
-                state={queueStepState}
+          <Panel title="Actions + customer update draft">
+            <div className="action-list">
+              <ActionButton
+                label={workflow.queued ? 'Added to investigation queue' : 'Add to investigation queue'}
+                enabled={!workflow.queued}
                 complete={workflow.queued}
-              >
-                <ActionButton
-                  label={workflow.queued ? 'Added to investigation queue' : 'Add to investigation queue'}
-                  enabled={!workflow.queued}
-                  complete={workflow.queued}
-                  onClick={handleQueue}
-                />
-              </WorkflowStepCard>
-
-              <WorkflowStepCard
-                title="Assign CX follow-up"
-                state={cxStepState}
+                onClick={handleQueue}
+              />
+              <ActionButton
+                label="Assign CX follow-up"
+                enabled={workflow.queued && !workflow.cxAssigned}
                 complete={workflow.cxAssigned}
-                expanded={workflow.queued}
-              >
-                <ActionButton
-                  label="Assign CX follow-up"
-                  enabled={workflow.queued && !workflow.cxAssigned}
-                  complete={workflow.cxAssigned}
-                  onClick={handleAssignCx}
-                />
-                {workflow.queued && (
-                  <div className="workflow-step-body">
-                    <div className="embedded-section">
-                      <div className="subpanel-header">
-                        <div>
-                          <h3>CX evidence checklist</h3>
-                          <span className="assignee-chip">CX owner</span>
-                        </div>
-                      </div>
-                      <div className="checklist">
-                        {checklistState.map((item) => (
-                          <div key={item.label} className={`check-item ${item.complete ? 'complete' : ''}`}>
-                            <span className="check-icon">{item.complete ? '✓' : '○'}</span>
-                            <span>{item.label}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="embedded-section notes-panel">
-                      <div className="notes-header">
-                        <h4>CX notes</h4>
-                        <button
-                          type="button"
-                          className="inline-action"
-                          onClick={handleAddCxNotes}
-                          disabled={workflow.cxNotesAdded || workflow.productRequested}
-                        >
-                          {workflow.cxNotesAdded ? 'Notes added' : 'Add sample CX notes'}
-                        </button>
-                      </div>
-                      <div className={`notes-body ${workflow.cxNotesAdded ? 'filled' : ''}`}>
-                        {workflow.cxNotesAdded ? (
-                          <ul>
-                            {seededCxNotes.map((note) => (
-                              <li key={note}>{note}</li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p>Waiting for CX follow-up examples, screenshots, and customer context.</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </WorkflowStepCard>
-
-              <WorkflowStepCard
-                title="Request Product review"
-                state={productStepState}
+                onClick={handleAssignCx}
+              />
+              <ActionButton
+                label="Request Product review"
+                enabled={workflow.cxNotesAdded && !workflow.productRequested}
                 complete={workflow.productRequested}
-                expanded={workflow.cxAssigned}
-              >
-                <ActionButton
-                  label="Request Product review"
-                  enabled={workflow.cxAssigned && !workflow.productRequested}
-                  complete={workflow.productRequested}
-                  onClick={handleProductReview}
-                />
-                {workflow.cxAssigned && (
-                  <div className="workflow-step-body">
-                    <div className="embedded-section">
-                      <div className="subpanel-header">
-                        <div>
-                          <h3>Product assessment</h3>
-                          <span className="assignee-chip product">Product reviewer</span>
-                        </div>
-                        <StatusChip
-                          label={workflow.productRequested ? 'Active review' : 'Queued'}
-                          tone={workflow.productRequested ? 'info' : 'neutral'}
-                        />
-                      </div>
-                      <ul className="stack-list">
-                        {productAssessment.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                )}
-              </WorkflowStepCard>
-
-              <WorkflowStepCard
-                title="Raise Engineering ticket"
-                state={engineeringStepState}
+                onClick={handleProductReview}
+              />
+              <ActionButton
+                label="Raise Engineering ticket"
+                enabled={workflow.productRequested && !workflow.engineeringRaised}
                 complete={workflow.engineeringRaised}
-                expanded={workflow.productRequested}
-              >
-                <ActionButton
-                  label="Raise Engineering ticket"
-                  enabled={workflow.productRequested && !workflow.engineeringRaised}
-                  complete={workflow.engineeringRaised}
-                  onClick={handleEngineering}
-                />
-                {workflow.productRequested && (
-                  <div className="workflow-step-body">
-                    <div className="embedded-section">
-                      <div className="subpanel-header">
-                        <div>
-                          <h3>Engineering ticket summary</h3>
-                          <span className="assignee-chip engineering">Engineering</span>
-                        </div>
-                        <StatusChip
-                          label={workflow.engineeringRaised ? 'Opened' : 'Queued'}
-                          tone={workflow.engineeringRaised ? 'success' : 'neutral'}
-                        />
-                      </div>
-                      <ul className="stack-list">
-                        {engineeringTicket.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                )}
-              </WorkflowStepCard>
+                onClick={handleEngineering}
+              />
             </div>
 
-            <div className="draft-panel persistent-draft">
-              <div className="subpanel-header">
-                <div>
-                  <h3>Customer update draft</h3>
-                  <span className="muted-label">Living artifact</span>
+            <button type="button" className="link-action" onClick={handleRefreshDraft}>
+              Refresh customer draft
+            </button>
+
+            {workflow.cxAssigned && (
+              <div className="reveal-block">
+                <div className="subpanel-header">
+                  <div>
+                    <h3>CX evidence checklist</h3>
+                    <span className="assignee-chip">CX owner</span>
+                  </div>
+                  <StatusChip label={activeStatus} tone="neutral" />
                 </div>
-                <button type="button" className="link-action compact-link" onClick={handleRefreshDraft}>
-                  Refresh draft
-                </button>
+                <div className="checklist">
+                  {checklistState.map((item) => (
+                    <div key={item.label} className={`check-item ${item.complete ? 'complete' : ''}`}>
+                      <span className="check-icon">{item.complete ? '✓' : '○'}</span>
+                      <span>{item.label}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="notes-panel">
+                  <div className="notes-header">
+                    <h4>CX notes</h4>
+                    <button
+                      type="button"
+                      className="inline-action"
+                      onClick={handleAddCxNotes}
+                      disabled={workflow.cxNotesAdded}
+                    >
+                      {workflow.cxNotesAdded ? 'Notes added' : 'Add sample CX notes'}
+                    </button>
+                  </div>
+                  <div className={`notes-body ${workflow.cxNotesAdded ? 'filled' : ''}`}>
+                    {workflow.cxNotesAdded ? (
+                      <ul>
+                        {seededCxNotes.map((note) => (
+                          <li key={note}>{note}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p>Waiting for CX follow-up examples, screenshots, and customer context.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {workflow.productRequested && (
+              <div className="reveal-block">
+                <div className="subpanel-header">
+                  <div>
+                    <h3>Product assessment</h3>
+                    <span className="assignee-chip product">Product reviewer</span>
+                  </div>
+                  <StatusChip label="Active review" tone="info" />
+                </div>
+                <ul className="stack-list">
+                  {productAssessment.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {workflow.engineeringRaised && (
+              <div className="reveal-block">
+                <div className="subpanel-header">
+                  <div>
+                    <h3>Engineering ticket</h3>
+                    <span className="assignee-chip engineering">Engineering</span>
+                  </div>
+                  <StatusChip label="Opened" tone="success" />
+                </div>
+                <ul className="stack-list">
+                  {engineeringTicket.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="draft-panel">
+              <div className="subpanel-header">
+                <h3>Customer update draft</h3>
+                <span className="muted-label">Living artifact</span>
               </div>
               <p>{customerDraft}</p>
             </div>
@@ -642,7 +556,6 @@ function App() {
                   <span>
                     <StatusChip
                       label={row.status}
-                      compact
                       tone={
                         row.status.includes('Engineering')
                           ? 'neutral'
@@ -663,7 +576,7 @@ function App() {
           </Panel>
 
           <Panel title="Case timeline / handoff log">
-            <div className="timeline" ref={timelineRef}>
+            <div className="timeline">
               {timeline.map((event, index) => (
                 <div key={`${event.label}-${event.time}`} className="timeline-item">
                   <div className="timeline-marker">
@@ -760,25 +673,16 @@ function ActionButton({ label, enabled, complete, onClick }) {
       disabled={!enabled}
     >
       <span>{label}</span>
-      <span className="action-glyph">{complete ? '✓' : '→'}</span>
+      <span className="action-state">{complete ? 'Done' : enabled ? 'Ready' : 'Locked'}</span>
     </button>
   );
 }
 
-function WorkflowStepCard({ title, state, complete, expanded = false, children }) {
-  return (
-    <section className={`workflow-step-card ${expanded ? 'expanded' : ''} ${complete ? 'complete' : ''}`}>
-      <div className="workflow-step-header">
-        <h3>{title}</h3>
-        <span className={`workflow-step-state ${state.toLowerCase()}`}>{state}</span>
-      </div>
-      <div className="workflow-step-content">{children}</div>
-    </section>
-  );
-}
-
-function StatusChip({ label, tone = 'neutral', compact = false }) {
-  return <span className={`status-chip ${tone} ${compact ? 'compact' : ''}`}>{label}</span>;
+function StatusChip({ label, tone = 'neutral' }) {
+  return <span className={`status-chip ${tone}`}>{label}</span>;
 }
 
 export default App;
+
+
+
